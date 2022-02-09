@@ -99,6 +99,17 @@ Manage your connections
 END
 }
 
+function _AUTOCOMPLETE {
+	conn=""
+	# Read each connection to show in autocomplete
+	while IFS= read -r c; do
+    	name=$(echo ${c} | cut -d '|' -f 1)
+    	conn="${conn}${name} "
+	done < "${db}"
+
+	echo -e "${conn}"
+}
+
 function _LIST_CONNECTIONS {
 	conn_qtd=0
 	echo -e "\t[ FSSH - Connections ]\n"
@@ -265,6 +276,307 @@ function _SEND_REMOTE_COMMAND {
 	fi
 }
 
+function _SELECT_CONNECTION_INTERACTIVE {
+	DIALOG_CANCEL=1
+	DIALOG_ESC=255
+	HEIGHT=0
+	WIDTH=0
+
+	connections=()
+	conn_qtd=0
+
+	# Read each connection in fssh db connections
+	while IFS= read -r c; do
+    	name=$(echo ${c} | cut -d '|' -f 1)
+    	host=$(echo ${c} | cut -d '|' -f 2)
+    	user=$(echo ${c} | cut -d '|' -f 3)
+
+		#connections="${connections}$name ${user}@${host}\n"
+		connections+=("${name}" "${user}@${host}")
+		((conn_qtd++))
+	done < "${db}"
+
+	# Select a connection
+	while true; do
+	 	exec 3>&1
+	 	machine=$(dialog \
+			--backtitle "FSSH" \
+			--title "Select" \
+			--clear \
+			--ok-label "Connect" \
+			--cancel-label "Back" \
+			--menu "Select a connection:" $HEIGHT $WIDTH ${conn_qtd} \
+				${connections[@]} 2>&1 1>&3)
+		exit_status=$?
+		exec 3>&-
+		case $exit_status in
+			$DIALOG_CANCEL | $DIALOG_ESC)
+				break
+			;;
+		esac
+
+		if [[ $1 == "--connect" ]]; then
+			clear
+			_CONNECT_TO_HOST "${machine}"
+		elif [[ $1 == "--send-command" ]]; then
+			_SEND_REMOTE_COMMAND_INTERACTIVE "${machine}" "${user}@${host}"
+		elif [[ $1 == "--delete" ]]; then
+			_DELETE_CONNECTIONS_INTERACTIVE "${machine}" "${user}@${host}"
+			break
+		fi
+	done
+}
+
+function _SEND_REMOTE_COMMAND_INTERACTIVE {
+	DIALOG_OK=0
+	DIALOG_CANCEL=1
+	DIALOG_ESC=255
+
+	exec 3>&1
+	
+	command=$(dialog \
+		--backtitle "FSSH" \
+		--title "Send Command" \
+		--clear \
+		--ok-label "Send" \
+		--cancel-label "Back" \
+		--inputbox \
+	"Machine selected: ${1} \nSending to: ${2} \n\nType a command:" \
+	0 0 2>&1 1>&3)
+
+	# Get dialog's exit status
+	return_value=$?
+
+	exec 3>&-
+
+	case $return_value in
+		$DIALOG_OK )
+			clear
+	    	_SEND_REMOTE_COMMAND ${1} ${command}
+	    	echo -e "\n[ FSSH ] - Command executed.\n[ FSSH ] - Type ENTER to continue"
+	    	read
+	    ;;
+		
+		$DIALOG_CANCEL | $DIALOG_ESC )
+	    	return
+		;;
+	esac
+}
+
+function _LIST_CONNECTIONS_INTERACTIVE {
+	connections=""
+	title="Connections"
+
+	# Read each connection in fssh db connections
+	while IFS= read -r c; do
+    	name=$(echo ${c} | cut -d '|' -f 1)
+    	host=$(echo ${c} | cut -d '|' -f 2)
+    	user=$(echo ${c} | cut -d '|' -f 3)
+    	pkey=$(echo ${c} | cut -d '|' -f 4)
+
+		if [[ -n ${pkey} ]] ; then
+			connections="${connections}[ $name ] \nAccess: ${user}@${host}\nPrivate Key: ${pkey}\n\n"
+		else
+			connections="${connections}[ $name ] \nAccess: ${user}@${host}\n\n"
+		fi
+    	
+	done < "${db}"
+
+	if [[ -z ${connections} ]] ; then
+		connections="No connections registered"
+	fi
+
+	_DISPLAY_INTERACTIVE ${title} "${connections}"
+}
+
+function _ADD_CONNECTIONS_INTERACTIVE {
+	DIALOG_OK=0
+	DIALOG_CANCEL=1
+	DIALOG_ESC=255
+
+	name=""
+	user="$(whoami)"
+	host=""
+	pkey=""
+
+	# Form
+	exec 3>&1
+
+	values=$(dialog --backtitle "FSSH" \
+			--title "Add Connection" \
+			--clear \
+			--ok-label "Add" \
+			--cancel-label "Cancel" \
+			--form "Private key is optional field" \
+				0 0 0 \
+		"Connection Name:"	1 1	"$name" 	1 20 25 100 \
+		"User:"				2 1	"$user"  	2 20 25 100 \
+		"Host:"				3 1	"$host"  	3 20 25 100 \
+		"Private Key Path:"	4 1	"$pkey" 	4 20 25 150 \
+	2>&1 1>&3)
+
+	# Get dialog's exit status
+	return_value=$?
+	
+	exec 3>&-
+
+	if [[ ${return_value} != ${DIALOG_OK} ]]; then
+		return
+	fi
+
+	# Set variables
+	name=$(echo "${values}" | sed -n 1p)
+	user=$(echo "${values}" | sed -n 2p)
+	host=$(echo "${values}" | sed -n 3p)
+	pkey=$(echo "${values}" | sed -n 4p)
+
+	# Check valid input
+	# Check if every essential parameter was informed
+	if [[ -z ${name} ]] ; then
+		_DISPLAY_INTERACTIVE "Invalid Insertion" "Name to connection not informed"
+		return
+	elif [[ -z ${host} ]] ; then
+		_DISPLAY_INTERACTIVE "Invalid Insertion" "Host to connection not informed"
+		return
+	elif [[ -z ${user} ]] ; then
+		_DISPLAY_INTERACTIVE "Invalid Insertion" "User to connection not informed"
+		return
+	fi
+
+	# Avoid duplicated insertion
+	conn=$(grep -c "^${name}|" $db)
+	if [[ ${conn} > 0 ]] ; then
+		_DISPLAY_INTERACTIVE "Invalid Insertion" "Name [ ${name} ] already in use"
+		return
+	fi
+
+	# Check valid private key
+	if [[ -n ${pkey} ]] && [[ ! -f ${pkey} ]] ; then
+		_DISPLAY_INTERACTIVE "Invalid Insertion" "Private key [ ${pkey} ] not find \n\nMust inform entire path to private key"
+		return
+	fi
+
+	# Confirm Value
+	if [[ -n ${pkey} ]] ; then
+    	validation="Connection name: ${name}\nAccess: ${user}@${host}\nPrivate Key: ${pkey}"
+    else
+		validation="Connection name: ${name}\nAccess: ${user}@${host}"
+    fi
+
+    exec 3>&1
+	
+	use_pkey=$(dialog \
+		--backtitle "FSSH" \
+		--title "Confirm Values" \
+		--clear \
+		--yesno \
+	"The information below is correct?\n\n${validation}" \
+	0 0 2>&1 1>&3)
+
+	# Get dialog's exit status
+	return_value=$?
+	exec 3>&-
+
+	if [[ ${return_value} != ${DIALOG_OK} ]] && [[ ${return_value} != ${DIALOG_CANCEL} ]]; then
+		return
+	fi
+
+	if [[ ${return_value} == ${DIALOG_OK} ]]; then
+		echo "${name}|${host}|${user}|${pkey}" >> ${db} \
+		&& _DISPLAY_INTERACTIVE "Insertion" "Data successfully inserted" \
+		|| _DISPLAY_INTERACTIVE "Insertion" "Failed to insert data"
+	fi
+}
+
+function _DELETE_CONNECTIONS_INTERACTIVE {
+	conn=$(grep "^${1}|" $db)
+
+	# Connection not find
+	if [[ -z ${conn} ]]; then
+		echo -e "Connection name [ ${1} ] not find\nListing all connections available\n"
+		_LIST_CONNECTIONS
+		return
+	fi
+
+	success=false
+	sed -i "/^${1}|/d" ${db} && success=true
+	if [[ ${success} == true ]]; then
+		_DISPLAY_INTERACTIVE "Delete" "Succefully deleted\n\nConnection: ${1}\nAccess: ${2}"
+	else
+		_DISPLAY_INTERACTIVE "Delete" "Failed to delete\n\nConnection: ${1}\nAccess: ${2}"
+	fi
+}
+
+function _DISPLAY_INTERACTIVE {
+	dialog --backtitle "FSSH" \
+		--title "${1}" \
+		--no-collapse \
+		--clear \
+		--ok-label "OK" \
+		--msgbox "${2}" 0 0
+}
+
+function _MAIN_INTERACTIVE {
+	DIALOG_CANCEL=1
+	DIALOG_ESC=255
+	HEIGHT=0
+	WIDTH=0
+
+	while true; do
+	 	exec 3>&1
+	 	selection=$(dialog \
+			--backtitle "FSSH" \
+			--title "Menu" \
+			--clear \
+			--ok-label "Choose" \
+			--cancel-label "Exit" \
+			--menu "Select an option:" $HEIGHT $WIDTH 5 \
+				"Connect" "Connect to a host" \
+				"Send" "Send a commmand remotly to a host" \
+				"List" "List registered connections" \
+				"Add" "Add a new connection" \
+				"Delete" "Delete a connection" \
+			2>&1 1>&3)
+		exit_status=$?
+		exec 3>&-
+		case $exit_status in
+			$DIALOG_CANCEL )
+				clear
+				echo "Program terminated"
+				exit
+			;;
+			$DIALOG_ESC )
+				clear
+				echo "Program aborted" >&2
+				exit
+			;;
+		esac
+
+		case $selection in
+
+			"Connect" )
+				_SELECT_CONNECTION_INTERACTIVE --connect
+			;;
+
+			"Send" )
+				_SELECT_CONNECTION_INTERACTIVE --send-command
+			;;
+
+			"List" )
+				_LIST_CONNECTIONS_INTERACTIVE
+			;;
+
+			"Add" )
+				_ADD_CONNECTIONS_INTERACTIVE
+			;;
+
+			"Delete" )
+				_SELECT_CONNECTION_INTERACTIVE --delete
+			;;
+		esac
+	done
+}
+
 function _MAIN {
 	# Parse Parameters
 	if [[ $# == 0 ]] ; then
@@ -273,7 +585,7 @@ function _MAIN {
 			echo -e "No connections registered \nCreate one using [ -a ] option"
 		else
 			echo -e "\nUse [ ffsh <name> ] to connect into a host"
-			echo -e "Use [ ffsh <name> <command> ] to send a remote commando to a host"
+			echo -e "Use [ ffsh <name> <command> ] to send a remote command to a host"
 		fi
 		exit
 	fi
@@ -285,9 +597,14 @@ function _MAIN {
 		;;
 
 		-l|--list )
-			_LIST_CONNECTIONS
-			if [[ $conn_qtd == 0 ]] ; then
-				echo -e "No connections registered \nCreate one using [ -a ] option"
+			shift
+			if [[ $1 == "--autocomplete" ]]; then
+				_AUTOCOMPLETE
+			else
+				_LIST_CONNECTIONS
+				if [[ $conn_qtd == 0 ]] ; then
+					echo -e "No connections registered \nCreate one using [ -a ] option"
+				fi
 			fi
 		;;
 
@@ -299,6 +616,14 @@ function _MAIN {
 		-d|--delete )
 			shift
 			_DELETE_CONNECTION $1
+		;;
+
+		-i|--interactive )
+			if [[ ${i_mode} == 1 ]]; then
+				_MAIN_INTERACTIVE	
+			else
+				echo -e "Interactive mode disabled \nCheck if [ dialog ] is installed in system"
+			fi
 		;;
 
 		*)

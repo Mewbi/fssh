@@ -3,6 +3,8 @@
 #----------------------------------------[ VARS ]
 path="/usr/bin/"
 file="fssh.sh"
+autocomplete_path="/etc/bash_completion.d/"
+autocomplete_file="fssh-autocomplete"
 
 #--------------------------------[ VALIDANTIONS ]
 # Check root permission
@@ -25,5 +27,12 @@ chmod +x ${file}
 echo -e "Installing in system"
 mv ${file} ${path}${file} || { echo "Fail to install in ${path}"; exit; }
 ln -s ${path}${file} ${path}fssh || { echo "Fail to create symbolic link"; exit; }
+
+echo -e "Setting autocomplete"
+if [[ ! -d ${autocomplete_path} ]] ; then
+	echo "Creating directory [ ${autocomplete_path} ]"
+	mkdir -p ${autocomplete_path} || { echo -e "\nError creating ${autocomplete_path}"; exit 1; }
+fi
+mv ${autocomplete_file} ${autocomplete_path}${autocomplete_file}
 
 echo -e "Installation completed \nUse fssh to use the program"
