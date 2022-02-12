@@ -33,6 +33,9 @@ if [[ ! -d ${autocomplete_path} ]] ; then
 	echo "Creating directory [ ${autocomplete_path} ]"
 	mkdir -p ${autocomplete_path} || { echo -e "\nError creating ${autocomplete_path}"; exit 1; }
 fi
-mv ${autocomplete_file} ${autocomplete_path}${autocomplete_file}
+
+mv ${autocomplete_file} ${autocomplete_path}fssh
+echo "source ${autocomplete_path}fssh" >> ${HOME}/.bashrc
+source ${autocomplete_path}fssh
 
 echo -e "Installation completed \nUse fssh to use the program"

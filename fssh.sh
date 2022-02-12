@@ -13,12 +13,12 @@
 #
 
 #----------------------------------------[ VARS ]
-dependenceis=("ssh" "dialog" "sed")
+dependenceis=("ssh" "dialog" "sed" "cut")
 i_mode=1 # Interactive mode
 base_path="${HOME}/.config/fssh"
 db="${base_path}/connections" # FSSH file
 
-#--------------------------------[ VALIDANTIONS ]
+#---------------------------------[ VALIDATIONS ]
 # Check dependencies
 for dep in ${dependenceis[@]}; do
 	if [[ -z $(type -P ${dep}) ]] ; then
@@ -78,6 +78,11 @@ Manage your connections
 -h | --help) 
 	Show this help menu
 
+-E | --regex)
+	Send commands to connections in a pattern
+	Usage: fssh -E <regex> <command>
+	Example: fssh -E '(master|slave)[0-2][0-9]' uname -a
+
 -a | --add)
 	Add a new SSH connection
 	Must be used with:
@@ -87,7 +92,6 @@ Manage your connections
 		-i - Path to private key - [ optional ]
 	Usage: fssh -a -n <name> -h <host> -u <username> -i <key-path>
 	Example: fssh -a -n vps -h 123.123.123.123 -u user -i /home/user/.ssh/id_rsa
-
 
 -l | --list)
 	List your saved connections
@@ -226,8 +230,8 @@ function _CONNECT_TO_HOST {
 		if [[ $conn_qtd == 0 ]] ; then
 			echo -e "No connections registered \nCreate one using [ -a ] option"
 		else
-			echo -e "\nUse [ ffsh <name> ] to connect into a host"
-			echo -e "Use [ ffsh <name> <command> ] to send a remote commando to a host"
+			echo -e "\nUse [ fssh <name> ] to connect into a host"
+			echo -e "Use [ fssh <name> <command> ] to send a remote commando to a host"
 		fi
 		return
 	fi
@@ -245,6 +249,22 @@ function _CONNECT_TO_HOST {
 	fi
 }
 
+function _FIND_CONNECTIONS_REGEX {
+	conns=$(cut -d '|' -f 1 ${db} | grep -E "$1")
+
+	# Connection not find
+	if [[ -z ${conns} ]]; then
+		echo -e "Pattern [ ${1} ] not find any connections"
+		return
+	fi
+
+	# Iterate over each connection
+	shift
+	for conn in ${conns}; do
+		_SEND_REMOTE_COMMAND ${conn} $@
+	done
+}
+
 function _SEND_REMOTE_COMMAND {
 	conn=$(grep -m 1 "^${1}|" $db)
 
@@ -256,8 +276,8 @@ function _SEND_REMOTE_COMMAND {
 		if [[ $conn_qtd == 0 ]] ; then
 			echo -e "No connections registered \nCreate one using [ -a ] option"
 		else
-			echo -e "\nUse [ ffsh <name> ] to connect into a host"
-			echo -e "Use [ ffsh <name> <command> ] to send a remote commando to a host"
+			echo -e "\nUse [ fssh <name> ] to connect into a host"
+			echo -e "Use [ fssh <name> <command> ] to send a remote commando to a host"
 		fi
 		return
 	fi
@@ -584,8 +604,8 @@ function _MAIN {
 		if [[ $conn_qtd == 0 ]] ; then
 			echo -e "No connections registered \nCreate one using [ -a ] option"
 		else
-			echo -e "\nUse [ ffsh <name> ] to connect into a host"
-			echo -e "Use [ ffsh <name> <command> ] to send a remote command to a host"
+			echo -e "\nUse [ fssh <name> ] to connect into a host"
+			echo -e "Use [ fssh <name> <command> ] to send a remote command to a host"
 		fi
 		exit
 	fi
@@ -624,6 +644,18 @@ function _MAIN {
 			else
 				echo -e "Interactive mode disabled \nCheck if [ dialog ] is installed in system"
 			fi
+		;;
+
+		-E|--regex )
+			shift
+			if [[ $# < 2 ]]; then
+				echo -e "Invalid number of parameters sended"
+			else
+				regex=$1
+				shift
+				_FIND_CONNECTIONS_REGEX ${regex} $@
+			fi
+
 		;;
 
 		*)
